@@ -282,10 +282,14 @@ run_compose() {
 }
 
 update_project() {
-    local id=$1 label=$2 directory=$3
+    local id=$1 label=$2 directory=$3 before after container name container_state health
+    local status_format='{{.ID}}{{printf "\x1f"}}{{.Name}}{{printf "\x1f"}}{{.State}}{{printf "\x1f"}}{{.Health}}'
     shift 3
     printf '%s pulling Compose images in %s\n' "$label" "$directory"
     run_compose "$id" "$label" "$directory" pull "$@" pull || return 1
+    (( cancel == 0 )) || return 0
+    before=$(run_compose "$id" "$label" "$directory" 'ps --status running' \
+        "$@" ps --orphans=false --status running --format '{{.ID}}') || return 1
     (( cancel == 0 )) || return 0
     printf '%s starting the Compose project in %s\n' "$label" "$directory"
     printf '  docker compose'
@@ -294,7 +298,23 @@ update_project() {
     run_compose "$id" "$label" "$directory" 'up -d' "$@" up -d || return 1
     (( cancel == 0 )) || return 0
     printf '%s: docker compose up -d succeeded. Container status before power-state cleanup:\n' "$label"
-    run_compose "$id" "$label" "$directory" 'ps --all' "$@" ps --all || return 1
+    after=$(run_compose "$id" "$label" "$directory" 'ps --all' \
+        "$@" ps --all --orphans=false --format "$status_format") || return 1
+    if [[ -z $after ]]; then
+        printf '  No containers found.\n'
+        compose_attention=1
+        return 0
+    fi
+    while IFS=$'\x1f' read -r container name container_state health; do
+        printf '  %s: %s%s\n' "$name" "$container_state" "${health:+ ($health)}"
+        if [[ $container_state != running || $health == unhealthy || $health == starting ]]; then
+            compose_attention=1
+        fi
+        if [[ $container_state == running && $'\n'$before$'\n' != *$'\n'"$container"$'\n'* ]]; then
+            compose_changed=1
+        fi
+    done <<< "$after"
+    return 0
 }
 
 update_projects() {
@@ -404,10 +424,21 @@ for id in "${selected[@]}"; do
     fi
 
     outcome=interrupted
+    compose_changed=0
+    compose_attention=0
     if (( cancel == 0 )); then
         update_projects "$id" "$label"
         case $? in
-            0) if (( prune )); then outcome='prune completed'; else outcome=updated; fi ;;
+            0)
+                if (( prune )); then
+                    outcome='prune completed'
+                elif (( compose_attention )); then
+                    outcome='Compose applied; check container status'
+                elif (( compose_changed )); then
+                    outcome='updated and running'
+                else
+                    outcome='running; no containers recreated or started'
+                fi ;;
             2) outcome='skipped (Docker unavailable)' ;;
             3) outcome='skipped (no deployed Compose projects)' ;;
             *) if (( prune )); then outcome='prune failed'; else outcome='update failed'; fi; failed=1 ;;
@@ -422,6 +453,9 @@ for id in "${selected[@]}"; do
                 restoration='shutdown failed; check power state'
                 failed=1
             fi
+        fi
+        if [[ $outcome == 'updated and running' || $outcome == 'running; no containers recreated or started' ]]; then
+            outcome="$outcome before shutdown"
         fi
         outcome="$outcome ($restoration)"
     fi

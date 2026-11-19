@@ -101,7 +101,8 @@ project and shows the container statuses before restoring LXC power state. If
 a command fails, the updater preserves Docker’s output and reports the failed
 step and exit code. An update failure skips the remaining projects in that LXC. The updater
 cleans up and proceeds to the next LXC. The summary lists each guest processed
-and flags any failed shutdown. The command exits nonzero if anything failed.
+and distinguishes containers already running from those started or recreated.
+It also flags container status that needs review and any failed shutdown. The command exits nonzero if anything failed.
 
 Running LXCs stay running. LXCs started by the updater are gracefully shut down
 afterward, including after a failed update. If graceful shutdown fails, the updater
