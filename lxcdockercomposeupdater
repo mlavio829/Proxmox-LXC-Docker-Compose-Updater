@@ -394,6 +394,22 @@ update_projects() {
     return 0
 }
 
+declare -a summary_guests=() summary_results=() summary_power=() summary_prune=()
+guest_width=5
+
+record_result() {
+    local guest=$1 result=$2 power=${3:--} candidates=${4:--}
+    if (( plan )); then
+        summary+=("$guest: $result")
+        return
+    fi
+    summary_guests+=("$guest")
+    summary_results+=("$result")
+    summary_power+=("$power")
+    summary_prune+=("$candidates")
+    (( ${#guest} <= guest_width )) || guest_width=${#guest}
+}
+
 failed=0
 for id in "${selected[@]}"; do
     (( cancel == 0 )) || break
@@ -404,27 +420,27 @@ for id in "${selected[@]}"; do
         label="${BASH_REMATCH[2]} ($label)"
     fi
     if (( explicit == 0 )) && contains_id "$id" "${excluded[@]}"; then
-        summary+=("$label: skipped (excluded)")
+        record_result "$label" "Skipped: excluded"
         continue
     fi
     if (( config_status != 0 )); then
-        summary+=("$label: failed to read guest configuration")
+        record_result "$label" "Guest config failed"
         failed=1
         continue
     fi
     if [[ $guest_config =~ (^|$'\n')template:[[:blank:]]+1($|$'\n') ]]; then
-        summary+=("$label: skipped (template)")
+        record_result "$label" "Skipped: template"
         continue
     fi
     if ! state=$(pct status "$id"); then
-        summary+=("$label: failed to read power state")
+        record_result "$label" "Power check failed"
         failed=1
         continue
     fi
     case "$state" in
         'status: running'|'status: stopped') ;;
         *)
-            summary+=("$label: unexpected power state ($state)")
+            record_result "$label" "Unexpected power state"
             failed=1
             continue ;;
     esac
@@ -446,78 +462,82 @@ for id in "${selected[@]}"; do
     if [[ $state == 'status: stopped' ]]; then
         printf '%s starting for maintenance\n' "$label"
         if ! pct start "$id"; then
-            summary+=("$label: LXC start failed")
+            record_result "$label" "LXC start failed"
             failed=1
             continue
         fi
     fi
 
-    outcome=interrupted
+    outcome=Interrupted
     compose_changed=0
     compose_attention=0
     docker_ready=0
-    prune_note=
+    prune_count=-
     if (( cancel == 0 )); then
         update_projects "$id" "$label"
         result=$?
         case $result in
             0)
                 if (( prune )); then
-                    outcome='prune completed'
+                    outcome='Prune completed'
                 elif (( compose_attention )); then
-                    outcome='Compose applied; check container status'
+                    outcome='Check container status'
                 elif (( compose_changed )); then
-                    outcome='updated and running'
+                    outcome='Updated and running'
                 else
-                    outcome='containers verified running; none started or recreated by Compose'
+                    outcome='Running (unchanged)'
                 fi ;;
             2)
                 if (( prune )); then
-                    outcome='skipped (Docker not installed)'
+                    skip_reason='skipped (Docker not installed)'
                 else
-                    outcome='skipped (Docker Compose not installed; Docker CLI missing)'
-                fi ;;
-            3) outcome='skipped (no deployed Compose projects)' ;;
-            4) outcome='skipped (Docker Compose not installed or unavailable)' ;;
-            *) if (( prune )); then outcome='prune failed'; else outcome='update failed'; fi; failed=1 ;;
+                    skip_reason='skipped (Docker Compose not installed; Docker CLI missing)'
+                fi
+                outcome='Skipped: no Docker' ;;
+            3)
+                skip_reason='skipped (no deployed Compose projects)'
+                outcome='Skipped: no projects' ;;
+            4)
+                skip_reason='skipped (Docker Compose not installed or unavailable)'
+                outcome='Skipped: no Compose' ;;
+            *) if (( prune )); then outcome='Prune failed'; else outcome='Update failed'; fi; failed=1 ;;
         esac
         if (( cancel != 0 )); then
-            outcome=interrupted
+            outcome=Interrupted
         elif (( result >= 2 && result <= 4 )); then
-            printf '%s: %s\n' "$label" "$outcome"
+            printf '%s: %s\n' "$label" "$skip_reason"
         fi
     fi
     if (( docker_ready && ! prune && cancel == 0 )); then
-        if prune_count=$(count_prune_candidates "$id"); then
-            case $prune_count in
-                0) prune_note=' | Prune: 0 candidates' ;;
-                1) prune_note=' | Prune: 1 candidate (consider pruning)' ;;
-                *) prune_note=" | Prune: $prune_count candidates (consider pruning)" ;;
-            esac
-        else
-            prune_note=' | Prune: count unavailable'
-        fi
+        prune_count=$(count_prune_candidates "$id") || prune_count=Unknown
     fi
-    power='already running, left on'
+    power='Kept on'
     if [[ $state == 'status: stopped' ]]; then
-        power='started for maintenance, restored to stopped'
+        power='Restored to off'
         if [[ $(pct status "$id") != 'status: stopped' ]]; then
             printf '%s shutting down\n' "$label"
             if ! pct shutdown "$id" --timeout 60 || [[ $(pct status "$id") != 'status: stopped' ]]; then
-                power='shutdown failed; check power state'
+                power='Shutdown failed'
                 failed=1
             fi
         fi
     fi
-    summary+=("$label: $outcome | LXC: $power$prune_note")
+    record_result "$label" "$outcome" "$power" "$prune_count"
 done
 if (( plan )); then
     printf '\nPlan (no guests started or changed)\n'
+    if (( ${#summary[@]} )); then
+        printf '%s\n' "${summary[@]}"
+    fi
 else
     printf '\nRun summary\n'
-fi
-if (( ${#summary[@]} )); then
-    printf '%s\n' "${summary[@]}"
+    row_format='%-*s  %-23s  %-15s  %8s\n'
+    printf "$row_format" "$guest_width" 'Guest' 'Result' 'LXC power' 'Prunable'
+    printf '%*s\n' "$((guest_width + 52))" '' | tr ' ' '-'
+    for index in "${!summary_guests[@]}"; do
+        printf "$row_format" "$guest_width" "${summary_guests[index]}" "${summary_results[index]}" \
+            "${summary_power[index]}" "${summary_prune[index]}"
+    done
 fi
 (( cancel == 0 )) || exit "$cancel"
 exit "$failed"
