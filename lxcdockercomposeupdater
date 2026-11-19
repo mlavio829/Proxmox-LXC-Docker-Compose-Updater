@@ -459,7 +459,8 @@ for id in "${selected[@]}"; do
     prune_note=
     if (( cancel == 0 )); then
         update_projects "$id" "$label"
-        case $? in
+        result=$?
+        case $result in
             0)
                 if (( prune )); then
                     outcome='prune completed'
@@ -480,7 +481,11 @@ for id in "${selected[@]}"; do
             4) outcome='skipped (Docker Compose not installed or unavailable)' ;;
             *) if (( prune )); then outcome='prune failed'; else outcome='update failed'; fi; failed=1 ;;
         esac
-        (( cancel == 0 )) || outcome=interrupted
+        if (( cancel != 0 )); then
+            outcome=interrupted
+        elif (( result >= 2 && result <= 4 )); then
+            printf '%s: %s\n' "$label" "$outcome"
+        fi
     fi
     if (( docker_ready && ! prune && cancel == 0 )); then
         if prune_count=$(count_prune_candidates "$id"); then
