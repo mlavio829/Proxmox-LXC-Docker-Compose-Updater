@@ -1,7 +1,7 @@
 #!/bin/bash
-# lxcdockercompose self-update format 1
+# lxcdockercomposeupdater self-update format 1
 
-config=/etc/lxcdockercomposeupdate.conf
+config=/etc/lxcdockercomposeupdater.conf
 cancel=0
 plan=0
 prune=0
@@ -13,14 +13,14 @@ die() {
 
 get_latest() (
     (( EUID == 0 )) || die 'Run -getlatest as root on the Proxmox host.'
-    local target=/usr/local/bin/lxcdockercomposeupdate tmp
+    local target=/usr/local/bin/lxcdockercomposeupdater tmp
     local repo=mlavio829/ProxmoxLXCUpdater revision url
     revision=$(wget -qO- --no-cache --header='Accept: application/vnd.github.sha' \
         "https://api.github.com/repos/$repo/commits/main") ||
         die 'Could not resolve the latest version on GitHub.'
     [[ $revision =~ ^[0-9a-f]{40}$ ]] || die 'GitHub did not return a valid commit ID.'
-    url="https://raw.githubusercontent.com/$repo/$revision/lxcdockercomposeupdate"
-    tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdate.XXXXXX) || die 'Could not stage the update.'
+    url="https://raw.githubusercontent.com/$repo/$revision/lxcdockercomposeupdater"
+    tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdater.XXXXXX) || die 'Could not stage the update.'
     trap 'rm -f -- "$tmp"' EXIT
     trap 'exit 130' INT
     trap 'exit 143' TERM
@@ -28,21 +28,14 @@ get_latest() (
     local header format
     {
         read -r header && read -r format &&
-            [[ $header == '#!/bin/bash' && $format == '# lxcdockercompose self-update format 1' ]]
+            [[ $header == '#!/bin/bash' && $format == '# lxcdockercomposeupdater self-update format 1' ]]
     } < "$tmp" && bash -n "$tmp" ||
-        die 'The download is invalid or predates the lxcdockercompose command.'
-    local command_path=/usr/local/bin/lxcdockercompose
-    if [[ -e $command_path || -L $command_path ]]; then
-        [[ -L $command_path && $command_path -ef $target ]] || die "Command path already in use: $command_path"
-    fi
+        die 'The download is invalid or predates the lxcdockercomposeupdater command.'
     if [[ -x $target ]] && cmp -s "$tmp" "$target"; then
-        printf 'lxcdockercompose is already up to date (%s).\n' "${revision:0:7}"
+        printf 'lxcdockercomposeupdater is already up to date (%s).\n' "${revision:0:7}"
     else
         chmod 0755 "$tmp" && mv -fT -- "$tmp" "$target" || die 'Could not install the update.'
         printf 'Updated %s to %s\n' "$target" "${revision:0:7}"
-    fi
-    if [[ ! -L $command_path ]]; then
-        ln -s lxcdockercomposeupdate "$command_path" || die "Could not create command: $command_path"
     fi
 )
 
@@ -72,7 +65,7 @@ CONFIG
 
 usage() {
     cat <<'HELP'
-Usage: lxcdockercompose [options] [LXC_ID ...]
+Usage: lxcdockercomposeupdater [options] [LXC_ID ...]
 
   (no action)     Pull images and redeploy Compose projects.
   -prune          Remove dangling Docker images. Volumes are preserved.
@@ -229,10 +222,10 @@ update_project() {
     shift 3
     printf '%s updating %s\n' "$label" "$directory"
     pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
-        lxcdockercomposeupdate "$directory" "$@" pull </dev/null || return 1
+        lxcdockercomposeupdater "$directory" "$@" pull </dev/null || return 1
     (( cancel == 0 )) || return 0
     pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
-        lxcdockercomposeupdate "$directory" "$@" up -d </dev/null
+        lxcdockercomposeupdater "$directory" "$@" up -d </dev/null
 }
 
 update_projects() {
