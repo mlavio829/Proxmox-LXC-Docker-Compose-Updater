@@ -56,8 +56,13 @@ uses those directories instead of automatic discovery.
 exclude 110
 ```
 
-An `exclude ID` line skips that guest during a bulk run. You can still update
-it by explicitly passing its ID.
+Run `lxcdockercompose -config` (or `lxcdockercomposeupdate -config`) as root
+to open the default configuration. On first use, it creates a file with
+commented examples. It uses `VISUAL` or `EDITOR` if set to an editor executable,
+then falls back to `nano` or `vi`.
+
+Add an `exclude ID` line to skip that guest during bulk updates and pruning.
+You can still target it explicitly by passing its ID.
 
 For a configured project, add optional **tab-separated** settings after its
 directory. Supported settings are `env-file=PATH`, `profile=NAME`,

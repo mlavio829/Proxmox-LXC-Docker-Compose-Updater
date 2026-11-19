@@ -41,6 +41,30 @@ get_latest() (
     fi
 )
 
+edit_config() {
+    (( EUID == 0 )) || die 'Run -config as root to edit the default configuration.'
+    local editor=${VISUAL:-${EDITOR:-}}
+    if [[ -z $editor ]]; then
+        if command -v nano >/dev/null; then
+            editor=nano
+        else
+            editor=vi
+        fi
+    fi
+    command -v "$editor" >/dev/null || die "Editor not found: $editor"
+    if [[ ! -e $config ]]; then
+        (umask 022; set -o noclobber; cat > "$config" <<'CONFIG'
+# Skip an LXC during bulk updates and pruning. Remove the # and use its ID.
+# exclude 100
+#
+# Optional: configure a Compose project directory inside a guest.
+# 105 /opt/compose/example
+CONFIG
+        ) || die "Could not create $config."
+    fi
+    exec "$editor" "$config"
+}
+
 usage() {
     cat <<'HELP'
 Usage: lxcdockercompose [options] [LXC_ID ...]
@@ -48,6 +72,7 @@ Usage: lxcdockercompose [options] [LXC_ID ...]
   (no action)     Pull images and redeploy Compose projects.
   -prune          Remove dangling Docker images. Volumes are preserved.
   -plan           Show which guests would be visited without booting them.
+  -config         Edit the default configuration file.
   -config FILE    Read an alternate configuration file.
   -getlatest      Update this command from GitHub without visiting guests.
   -help, -h       Show this help.
@@ -61,6 +86,10 @@ if [[ ${1:-} == -getlatest || ${1:-} == --getlatest ]]; then
     (( $# == 1 )) || die '-getlatest cannot be combined with other arguments.'
     get_latest
     exit $?
+fi
+
+if (( $# == 1 )) && [[ $1 == -config || $1 == --config ]]; then
+    edit_config
 fi
 
 while (( $# )); do
