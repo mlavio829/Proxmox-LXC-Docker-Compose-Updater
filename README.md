@@ -12,7 +12,8 @@ If your installed copy already supports self-update, run this as root:
 lxcdockercompose -getlatest
 ```
 
-It downloads the latest script from GitHub's `main` branch and replaces the
+It resolves GitHub's `main` branch to a commit, downloads that commit's script,
+and replaces the
 installed command if it has changed. It leaves the configuration and LXCs alone.
 
 For a first install or to switch from the older command name, run this from a
@@ -20,12 +21,16 @@ root shell on Proxmox.
 The download is staged and checked before replacing the installed command.
 Your configuration file stays in place.
 
-```sh
+```bash
 (
   set -e
   tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdate.XXXXXX)
   trap 'rm -f -- "$tmp"' EXIT
-  wget -O "$tmp" https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate
+  repo=mlavio829/ProxmoxLXCUpdater
+  revision=$(wget -qO- --no-cache --header='Accept: application/vnd.github.sha' \
+    "https://api.github.com/repos/$repo/commits/main")
+  [[ $revision =~ ^[0-9a-f]{40}$ ]]
+  wget -O "$tmp" "https://raw.githubusercontent.com/$repo/$revision/lxcdockercomposeupdate"
   bash -n "$tmp"
   grep -Fxq '# lxcdockercompose self-update format 1' "$tmp"
   chmod 0755 "$tmp"

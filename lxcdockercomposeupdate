@@ -14,7 +14,12 @@ die() {
 get_latest() (
     (( EUID == 0 )) || die 'Run -getlatest as root on the Proxmox host.'
     local target=/usr/local/bin/lxcdockercomposeupdate tmp
-    local url=https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate
+    local repo=mlavio829/ProxmoxLXCUpdater revision url
+    revision=$(wget -qO- --no-cache --header='Accept: application/vnd.github.sha' \
+        "https://api.github.com/repos/$repo/commits/main") ||
+        die 'Could not resolve the latest version on GitHub.'
+    [[ $revision =~ ^[0-9a-f]{40}$ ]] || die 'GitHub did not return a valid commit ID.'
+    url="https://raw.githubusercontent.com/$repo/$revision/lxcdockercomposeupdate"
     tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdate.XXXXXX) || die 'Could not stage the update.'
     trap 'rm -f -- "$tmp"' EXIT
     trap 'exit 130' INT
@@ -31,10 +36,10 @@ get_latest() (
         [[ -L $command_path && $command_path -ef $target ]] || die "Command path already in use: $command_path"
     fi
     if [[ -x $target ]] && cmp -s "$tmp" "$target"; then
-        printf 'lxcdockercompose is already up to date.\n'
+        printf 'lxcdockercompose is already up to date (%s).\n' "${revision:0:7}"
     else
         chmod 0755 "$tmp" && mv -fT -- "$tmp" "$target" || die 'Could not install the update.'
-        printf 'Updated %s\n' "$target"
+        printf 'Updated %s to %s\n' "$target" "${revision:0:7}"
     fi
     if [[ ! -L $command_path ]]; then
         ln -s lxcdockercomposeupdate "$command_path" || die "Could not create command: $command_path"
