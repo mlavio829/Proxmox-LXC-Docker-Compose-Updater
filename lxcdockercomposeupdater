@@ -39,6 +39,55 @@ get_latest() (
     fi
 )
 
+write_config_guide() {
+    cat <<'CONFIG'
+# lxcdockercomposeupdater configuration guide
+#
+# Save this file as /etc/lxcdockercomposeupdater.conf. Blank lines and lines
+# beginning with # are ignored. To activate an example, remove its leading
+# "# " and replace the sample LXC ID and paths with your own. Leave comments
+# on separate lines. You can leave this whole file commented out to use
+# automatic Compose discovery across all eligible LXCs on this Proxmox node.
+#
+# EXCLUDE GUESTS FROM BULK RUNS
+# Syntax: exclude LXC_ID
+# Use one line per guest. This applies to bulk updates and pruning.
+# Passing the ID explicitly overrides the exclusion for that run.
+#
+# exclude 100
+# exclude 310
+#
+# SET COMPOSE PROJECT DIRECTORIES MANUALLY
+# Syntax: LXC_ID /absolute/path/inside/the/guest
+# Use one line per project. Spaces in directory names are allowed. Do not
+# put quotes around paths. Each directory should contain a Compose file,
+# unless you supply file= below.
+# For an LXC with manual entries, list ALL projects you want updated in it.
+# Automatic Compose discovery is used only for LXCs without manual entries.
+#
+# 105 /root
+# 108 /opt/compose/plex
+# 108 /opt/compose/home monitoring
+#
+# OPTIONAL COMPOSE SETTINGS
+# Add a real Tab after the directory and between each key=value setting.
+# Use no quotes around the values. Spaces within a value are allowed.
+#   file=PATH          Compose file to pass to Docker Compose.
+#   env-file=PATH      Environment file to pass to Docker Compose.
+#   profile=NAME       Compose profile to enable.
+#   project-name=NAME  Existing Compose project name to use.
+# Relative file and env-file paths are resolved from the project directory.
+# Repeat file= or profile= in another tab-separated field if needed.
+# The example below already contains real tabs.
+#
+# 111 /opt/compose/media stack	file=compose.yml	env-file=.env.production	profile=workers	project-name=media
+#
+# In nano, press Ctrl+O then Enter to save, and Ctrl+X to exit.
+# Run lxcdockercomposeupdater -plan to check exclusions and configured paths
+# without starting any guests.
+CONFIG
+}
+
 edit_config() {
     (( EUID == 0 )) || die 'Run -config as root to edit the default configuration.'
     local editor=${VISUAL:-${EDITOR:-}}
@@ -51,14 +100,16 @@ edit_config() {
     fi
     command -v "$editor" >/dev/null || die "Editor not found: $editor"
     if [[ ! -e $config ]]; then
-        (umask 022; set -o noclobber; cat > "$config" <<'CONFIG'
-# Skip an LXC during bulk updates and pruning. Remove the # and use its ID.
-# exclude 100
-#
-# Optional: configure a Compose project directory inside a guest.
-# 105 /opt/compose/example
-CONFIG
-        ) || die "Could not create $config."
+        (umask 022; set -o noclobber; write_config_guide > "$config") ||
+            die "Could not create $config."
+    else
+        grep -Fxq '# lxcdockercomposeupdater configuration guide' "$config"
+        case $? in
+            0) ;;
+            1) { printf '\n'; write_config_guide; } >> "$config" ||
+                die "Could not add the guide to $config." ;;
+            *) die "Could not read $config." ;;
+        esac
     fi
     exec "$editor" "$config"
 }

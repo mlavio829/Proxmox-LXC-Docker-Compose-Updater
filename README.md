@@ -62,8 +62,8 @@ exclude 110
 ```
 
 Run `lxcdockercomposeupdater -config` as root
-to open the default configuration. On first use, it creates a file with
-commented examples. It uses `VISUAL` or `EDITOR` if set to an editor executable,
+to open the default configuration. It adds a commented guide with examples for
+exclusions, manual projects, and Compose settings if the guide is missing. It uses `VISUAL` or `EDITOR` if set to an editor executable,
 then falls back to `nano` or `vi`.
 
 Add an `exclude ID` line to skip that guest during bulk updates and pruning.
