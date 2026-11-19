@@ -1,25 +1,26 @@
 # Proxmox LXC Docker Compose Updater
 
-Install the Bash command on the Proxmox node that hosts your LXCs. It uses the
-host's `pct`, `flock`, and `timeout` commands. Docker, the Compose plugin, and
-any registry credentials must already be available to root inside each guest.
+Update Docker Compose stacks across a Proxmox node with one Bash command. The updater discovers deployed projects, pulls their images, and verifies container status. LXCs that start the run powered off are shut down again after maintenance.
+
+[Install](#install) · [Commands](#commands) · [Configuration](#configuration) · [Run summary](#run-summary)
+
+```bash
+lxcdockercomposeupdater -plan   # Preview the selected guests without booting them
+lxcdockercomposeupdater         # Update all eligible LXCs on this node
+```
 
 ## Install
 
-If your installed copy already supports self-update, run this as root:
+Run the installer as **root on the Proxmox node**. The host needs Bash, `pct`,
+`flock`, `timeout`, and `wget`. Each guest you want to update needs Docker,
+the Compose plugin, and any registry credentials its images require.
 
-```sh
-lxcdockercomposeupdater -getlatest
-```
+<details open>
+<summary>First install or migration from the old command name</summary>
 
-It resolves GitHub's `main` branch to a commit, downloads that commit's script,
-and replaces the installed command if it has changed. It leaves the configuration and LXCs alone.
-
-For a first install or to switch from the older command name, run this from a
-root shell on Proxmox.
-The download is staged and checked before replacing the installed command.
-If upgrading, the installer copies your old configuration when the new default
-file does not exist.
+The installer resolves GitHub’s `main` branch to a commit and checks the
+downloaded script before installing it in `/usr/local/bin`. If you have an old
+config, the installer copies it when the new config path is empty.
 
 ```bash
 (
@@ -41,86 +42,89 @@ file does not exist.
 )
 ```
 
-## Configure and run
+</details>
 
-Run `lxcdockercomposeupdater` as root to visit every LXC on the local node.
-The updater skips templates and, during Compose updates, guests without Docker
-or a working Compose plugin. It uses labels on
-existing Docker containers (including stopped ones) to find deployed Compose
-projects, their original project names, and their Compose files.
+Already installed? Update the updater with:
 
-For a project without Docker containers or Compose labels, create the optional
-`/etc/lxcdockercomposeupdater.conf`. Add one LXC ID and absolute guest directory
-per line. Paths can contain spaces. For IDs listed in this file, the updater
-uses those directories instead of automatic discovery.
+```bash
+lxcdockercomposeupdater -getlatest
+```
+
+## Commands
+
+| Command | What it does |
+| --- | --- |
+| `lxcdockercomposeupdater` | Update eligible local LXCs. |
+| `lxcdockercomposeupdater 105 108` | Update only LXCs 105 and 108. |
+| `lxcdockercomposeupdater -plan` | List selected guests, power states, and configured paths without starting guests. |
+| `lxcdockercomposeupdater -config` | Open the default config in an editor. |
+| `lxcdockercomposeupdater -config /path/to/file 105` | Use an alternate config for this run. |
+| `lxcdockercomposeupdater -prune 108` | Remove dangling Docker images in LXC 108. |
+| `lxcdockercomposeupdater -plan -prune` | Preview which guests a bulk prune would visit. |
+| `lxcdockercomposeupdater -getlatest` | Update the installed command from GitHub. |
+| `lxcdockercomposeupdater -help` | List options. Double-dash flags also work. |
+
+## Configuration
+
+Configuration is optional. The updater reads Docker Compose labels on existing
+containers, including stopped ones, to discover project names, working
+directories, and Compose files.
+
+Run `lxcdockercomposeupdater -config` to edit
+`/etc/lxcdockercomposeupdater.conf`. The updater adds a commented guide if one
+is missing. It uses the executable set in `VISUAL` or `EDITOR`, then tries
+`nano` and `vi`.
 
 ```text
-# LXC ID followed by the directory inside the guest
+# Keep this guest out of bulk updates and pruning.
+exclude 110
+
+# Explicit Compose directories inside the guests.
 101 /opt/compose/immich
 102 /srv/compose/downloads
 102 /srv/compose/home monitoring
-exclude 110
 ```
 
-Run `lxcdockercomposeupdater -config` as root
-to open the default configuration. It adds a commented guide with examples for
-exclusions, manual projects, and Compose settings if the guide is missing. It uses `VISUAL` or `EDITOR` if set to an editor executable,
-then falls back to `nano` or `vi`.
-
-Add an `exclude ID` line to skip that guest during bulk updates and pruning.
-You can still target it explicitly by passing its ID.
-
-For a configured project, add optional **tab-separated** settings after its
-directory. Supported settings are `env-file=PATH`, `profile=NAME`,
-`project-name=NAME`, and `file=PATH`. For multiple profiles or Compose files,
-repeat the setting in a new tab-separated field. Relative paths resolve from the
-guest project directory.
+- An explicit LXC ID on the command line overrides an exclusion for that run.
+- Manual paths replace discovery for that guest. List every project you want to update, one per line. Spaces in directory names are supported.
+- Add a real tab after the directory and between optional `file=PATH`, `env-file=PATH`, `profile=NAME`, or `project-name=NAME` settings. Repeat `file=` or `profile=` as needed. Relative paths resolve from the project directory inside the guest.
 
 ```text
-103 /opt/compose/my stack	env-file=.env.production	profile=workers	project-name=my-stack
+103 /opt/compose/my stack	file=compose.yml	env-file=.env.production	profile=workers	project-name=my-stack
 ```
 
-Run as root:
+## Run summary
 
-```sh
-lxcdockercomposeupdater -help
-lxcdockercomposeupdater -plan
-lxcdockercomposeupdater 101
-lxcdockercomposeupdater
-lxcdockercomposeupdater -prune 101
+```text
+Guest                       Result                   LXC power        Prunable
+------------------------------------------------------------------------------
+AdguardSecondary (LXC 100)  Skipped: no Docker       Kept on                 -
+LibreSpeed (LXC 105)        Updated and running      Kept on                 2
+Tautulli (LXC 110)          Running (unchanged)      Restored to off         0
 ```
 
-The plan lists selected guests, their power state, and any configured paths.
-Automatic Compose discovery is deferred until an update run.
+The **Result** column describes containers at verification time. **LXC power**
+shows what happened to the guest afterward. **Prunable** counts dangling images
+that no existing container references, including stopped containers. A dash
+means the check didn’t run. Actual space reclaimed depends on shared layers.
 
-Pass one or more IDs to limit the run to those LXCs. Pass
-`-config /path/to/file` before the IDs to use a different configuration file.
+The live output streams pull progress, shows the Compose command used to
+start each project, and lists container status. If a command fails, the updater
+prints Docker’s output, the failed step, and its exit code.
 
-The updater starts stopped LXCs and waits up to about 60 seconds for Docker.
-It runs `docker compose pull` followed by `docker compose up -d` for each
-project and shows the container statuses before restoring LXC power state. If
-a command fails, the updater preserves Docker’s output and reports the failed
-step and exit code. An update failure skips the remaining projects in that LXC. The updater
-cleans up and proceeds to the next LXC. The summary lists each guest processed
-and distinguishes containers already running from those started or recreated.
-It also flags container status that needs review and any failed shutdown. The command exits nonzero if anything failed.
+## How a run works
 
-Running LXCs stay running. LXCs started by the updater are gracefully shut down
-afterward, including after a failed update. If graceful shutdown fails, the updater
-reports the failure. An abrupt process kill or host failure can leave a guest
-running. Run the updater separately from other tasks that change the power state
-of the same LXCs. A host-wide lock prevents concurrent updater runs.
+1. Select local LXCs and skip templates and bulk-run exclusions.
+2. Start guests that are off and wait up to about 60 seconds for Docker. Skip Compose updates when Docker or its Compose plugin is unavailable.
+3. Run `docker compose pull`, then `docker compose up -d`, and check the resulting container status. A command failure skips the remaining projects in that guest.
+4. Gracefully shut down guests started for maintenance, including after an update failure. Continue to the next guest and report failures in the final summary.
 
-## Prune old images
+A host-wide lock prevents overlapping updater runs. Schedule the updater
+separately from other jobs that change the same guests’ power state. An abrupt
+process or host failure can leave a guest running.
 
-The regular run reports the number of dangling images that no existing
-container references, including stopped containers. A nonzero count suggests
-that pruning may help. The count is taken before restoring the guest's
-power state. Space reclaimed depends on which image layers are shared.
+### Pruning
 
-`lxcdockercomposeupdater -prune` uses `docker image prune` in eligible guests to remove
-dangling images. Tagged images and volumes are preserved. Pruning is a separate
-run with the same exclusions and power-state restoration as Compose updates.
-Pass an LXC ID to prune only that guest or add `-plan` to preview the guest list.
-
-Double-dash flags also work.
+Pruning runs separately with the same guest selection and power-state handling.
+It removes dangling Docker images and keeps tagged images and volumes. Run
+`lxcdockercomposeupdater -prune` across eligible guests or pass IDs to limit it.
