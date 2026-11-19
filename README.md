@@ -112,6 +112,11 @@ of the same LXCs. A host-wide lock prevents concurrent updater runs.
 
 ## Prune old images
 
+The regular run reports the number of dangling images that no existing
+container references, including stopped containers. A nonzero count suggests
+that pruning may help. The count is taken before restoring the guest's
+power state. Space reclaimed depends on which image layers are shared.
+
 `lxcdockercomposeupdater -prune` uses `docker image prune` in eligible guests to remove
 dangling images. Tagged images and volumes are preserved. Pruning is a separate
 run with the same exclusions and power-state restoration as Compose updates.

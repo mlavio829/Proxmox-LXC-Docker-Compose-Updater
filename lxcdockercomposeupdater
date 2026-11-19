@@ -317,6 +317,30 @@ update_project() {
     return 0
 }
 
+count_prune_candidates() {
+    local id=$1 images used image
+    local -a candidates=()
+    images=$(pct exec "$id" -- docker image ls --filter dangling=true --quiet --no-trunc </dev/null) ||
+        return 1
+    if [[ -z $images ]]; then
+        printf '0\n'
+        return 0
+    fi
+    used=$(pct exec "$id" -- sh -c '
+        containers=$(docker container ls --all --quiet) || exit 1
+        [ -n "$containers" ] || exit 0
+        set -f
+        set -- $containers
+        exec docker container inspect --format "{{.Image}}" "$@"
+    ' </dev/null) || return 1
+    while IFS= read -r image; do
+        [[ -n $image ]] || continue
+        [[ $'\n'$used$'\n' != *$'\n'"$image"$'\n'* ]] || continue
+        contains_id "$image" "${candidates[@]}" || candidates+=("$image")
+    done <<< "$images"
+    printf '%d\n' "${#candidates[@]}"
+}
+
 update_projects() {
     local id=$1 label=$2 index readiness records project directory files file
     local -a handled=() compose_args=() compose_files=() options=()
@@ -327,6 +351,7 @@ update_projects() {
     fi
     (( readiness == 0 )) || return 1
     (( cancel == 0 )) || return 0
+    docker_ready=1
 
     if (( prune )); then
         printf '%s pruning dangling Docker images\n' "$label"
@@ -429,6 +454,8 @@ for id in "${selected[@]}"; do
     outcome=interrupted
     compose_changed=0
     compose_attention=0
+    docker_ready=0
+    prune_note=
     if (( cancel == 0 )); then
         update_projects "$id" "$label"
         case $? in
@@ -448,6 +475,17 @@ for id in "${selected[@]}"; do
         esac
         (( cancel == 0 )) || outcome=interrupted
     fi
+    if (( docker_ready && ! prune && cancel == 0 )); then
+        if prune_count=$(count_prune_candidates "$id"); then
+            case $prune_count in
+                0) prune_note=' | Prune: 0 candidates' ;;
+                1) prune_note=' | Prune: 1 candidate (consider pruning)' ;;
+                *) prune_note=" | Prune: $prune_count candidates (consider pruning)" ;;
+            esac
+        else
+            prune_note=' | Prune: count unavailable'
+        fi
+    fi
     power='already running, left on'
     if [[ $state == 'status: stopped' ]]; then
         power='started for maintenance, restored to stopped'
@@ -459,7 +497,7 @@ for id in "${selected[@]}"; do
             fi
         fi
     fi
-    summary+=("$label: $outcome | LXC: $power")
+    summary+=("$label: $outcome | LXC: $power$prune_note")
 done
 if (( plan )); then
     printf '\nPlan (no guests started or changed)\n'
