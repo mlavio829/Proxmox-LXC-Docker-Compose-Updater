@@ -4,10 +4,19 @@ Install the Bash command on the Proxmox node that hosts your LXCs. It uses the
 host's `pct`, `flock`, and `timeout` commands. Docker, the Compose plugin, and
 any registry credentials must already be available to root inside each guest.
 
-## Install or update
+## Install
 
-Run this from a root shell on Proxmox. The same commands install a new copy or
-replace an existing one with the latest version on GitHub's `main` branch.
+If your installed copy already supports self-update, run this as root:
+
+```sh
+lxcdockercomposeupdate --getlatest
+```
+
+It downloads the latest script from GitHub's `main` branch and replaces the
+installed command if it has changed. It leaves the configuration and LXCs alone.
+
+For a first install or to upgrade an older copy that lacks `--getlatest`, run
+this from a root shell on Proxmox.
 The download is staged and checked before replacing the installed command.
 Your configuration file stays in place.
 
@@ -19,7 +28,7 @@ Your configuration file stays in place.
   wget -O "$tmp" https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate
   bash -n "$tmp"
   chmod 0755 "$tmp"
-  mv -f -- "$tmp" /usr/local/bin/lxcdockercomposeupdate
+  mv -fT -- "$tmp" /usr/local/bin/lxcdockercomposeupdate
 )
 ```
 

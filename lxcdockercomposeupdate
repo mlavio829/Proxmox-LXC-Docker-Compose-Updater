@@ -9,9 +9,35 @@ die() {
     exit 1
 }
 
+get_latest() (
+    (( EUID == 0 )) || die 'Run --getlatest as root on the Proxmox host.'
+    local target=/usr/local/bin/lxcdockercomposeupdate tmp
+    local url=https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate
+    tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdate.XXXXXX) || die 'Could not stage the update.'
+    trap 'rm -f -- "$tmp"' EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    wget -O "$tmp" "$url" || die 'Could not download the latest version.'
+    local header
+    read -r header < "$tmp" && [[ $header == '#!/bin/bash' ]] && bash -n "$tmp" ||
+        die 'The downloaded file is not a valid updater script.'
+    if [[ -x $target ]] && cmp -s "$tmp" "$target"; then
+        printf 'lxcdockercomposeupdate is already up to date.\n'
+        exit 0
+    fi
+    chmod 0755 "$tmp" && mv -fT -- "$tmp" "$target" || die 'Could not install the update.'
+    printf 'Updated %s\n' "$target"
+)
+
 usage() {
-    printf 'Usage: lxcdockercomposeupdate [--plan] [--config FILE] [LXC_ID ...]\n'
+    printf 'Usage: lxcdockercomposeupdate [--plan] [--config FILE] [LXC_ID ...]\n       lxcdockercomposeupdate --getlatest\n'
 }
+
+if [[ ${1:-} == --getlatest ]]; then
+    (( $# == 1 )) || die '--getlatest cannot be combined with other arguments.'
+    get_latest
+    exit $?
+fi
 
 while (( $# )); do
     case $1 in
