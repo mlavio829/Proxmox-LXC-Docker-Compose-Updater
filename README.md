@@ -6,11 +6,10 @@ any registry credentials must already be available to root inside each guest.
 
 ## Install
 
-From a root shell on Proxmox, run the following after publishing this repository
-to GitHub. Replace `OWNER/REPO` and `main` with your repository and branch.
+From a root shell on Proxmox, run the following to download and install the command from GitHub.
 
 ```sh
-wget -O lxcdockercomposeupdate https://raw.githubusercontent.com/OWNER/REPO/main/lxcdockercomposeupdate &&
+wget -O lxcdockercomposeupdate https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate &&
   install -m 0755 lxcdockercomposeupdate /usr/local/bin/lxcdockercomposeupdate
 ```
 
@@ -19,8 +18,15 @@ that checkout.
 
 ## Configure and run
 
-Create `/etc/lxcdockercomposeupdate.conf` with one LXC ID and absolute guest
-directory per line. Use one line per Compose project. Paths can contain spaces.
+Run `lxcdockercomposeupdate` as root to visit every LXC on the local node.
+The updater skips templates and guests without Docker. It uses labels on
+existing Docker containers (including stopped ones) to find deployed Compose
+projects, their original project names, and their Compose files.
+
+For a project without Docker containers or Compose labels, create the optional
+`/etc/lxcdockercomposeupdate.conf`. Add one LXC ID and absolute guest directory
+per line. Paths can contain spaces. For IDs listed in this file, the updater
+uses those directories instead of automatic discovery.
 
 ```text
 # LXC ID followed by the directory inside the guest
@@ -36,7 +42,7 @@ lxcdockercomposeupdate 101
 lxcdockercomposeupdate
 ```
 
-With no IDs, the command updates all configured LXCs on that node. Pass
+Pass one or more IDs to limit the run to those LXCs. Pass
 `--config /path/to/file` before the IDs to use a different configuration file.
 
 The updater starts stopped LXCs and waits up to about 60 seconds for Docker.
