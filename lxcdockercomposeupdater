@@ -346,9 +346,7 @@ update_projects() {
     local -a handled=() compose_args=() compose_files=() options=()
     wait_for_docker "$id" "$label"
     readiness=$?
-    if (( readiness == 2 )) && { (( prune )) || ! contains_id "$id" "${configured[@]}"; }; then
-        return 2
-    fi
+    (( readiness != 2 )) || return 2
     (( readiness == 0 )) || return 1
     (( cancel == 0 )) || return 0
     docker_ready=1
@@ -357,6 +355,9 @@ update_projects() {
         printf '%s pruning dangling Docker images\n' "$label"
         pct exec "$id" -- docker image prune --force </dev/null || return 1
         return 0
+    fi
+    if ! pct exec "$id" -- docker compose version </dev/null >/dev/null 2>&1; then
+        return 4
     fi
     if contains_id "$id" "${configured[@]}"; then
         for index in "${!project_ids[@]}"; do
@@ -469,8 +470,14 @@ for id in "${selected[@]}"; do
                 else
                     outcome='containers verified running; none started or recreated by Compose'
                 fi ;;
-            2) outcome='skipped (Docker unavailable)' ;;
+            2)
+                if (( prune )); then
+                    outcome='skipped (Docker not installed)'
+                else
+                    outcome='skipped (Docker Compose not installed; Docker CLI missing)'
+                fi ;;
             3) outcome='skipped (no deployed Compose projects)' ;;
+            4) outcome='skipped (Docker Compose not installed or unavailable)' ;;
             *) if (( prune )); then outcome='prune failed'; else outcome='update failed'; fi; failed=1 ;;
         esac
         (( cancel == 0 )) || outcome=interrupted

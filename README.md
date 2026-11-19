@@ -44,7 +44,8 @@ file does not exist.
 ## Configure and run
 
 Run `lxcdockercomposeupdater` as root to visit every LXC on the local node.
-The updater skips templates and guests without Docker. It uses labels on
+The updater skips templates and, during Compose updates, guests without Docker
+or a working Compose plugin. It uses labels on
 existing Docker containers (including stopped ones) to find deployed Compose
 projects, their original project names, and their Compose files.
 
