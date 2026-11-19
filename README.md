@@ -97,7 +97,9 @@ Pass one or more IDs to limit the run to those LXCs. Pass
 
 The updater starts stopped LXCs and waits up to about 60 seconds for Docker.
 It runs `docker compose pull` followed by `docker compose up -d` for each
-project. An update failure skips the remaining projects in that LXC. The updater
+project and shows the container statuses before restoring LXC power state. If
+a command fails, the updater preserves Docker’s output and reports the failed
+step and exit code. An update failure skips the remaining projects in that LXC. The updater
 cleans up and proceeds to the next LXC. The summary lists each guest processed
 and flags any failed shutdown. The command exits nonzero if anything failed.
 

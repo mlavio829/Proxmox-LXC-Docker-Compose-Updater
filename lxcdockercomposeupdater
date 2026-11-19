@@ -268,15 +268,33 @@ wait_for_docker() {
     return 1
 }
 
+run_compose() {
+    local id=$1 label=$2 directory=$3 action=$4 result
+    shift 4
+    pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
+        lxcdockercomposeupdater "$directory" "$@" </dev/null
+    result=$?
+    if (( result != 0 && cancel == 0 )); then
+        printf '%s: docker compose %s failed in %s (exit %d). See command output above.\n' \
+            "$label" "$action" "$directory" "$result" >&2
+    fi
+    return "$result"
+}
+
 update_project() {
     local id=$1 label=$2 directory=$3
     shift 3
-    printf '%s updating %s\n' "$label" "$directory"
-    pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
-        lxcdockercomposeupdater "$directory" "$@" pull </dev/null || return 1
+    printf '%s pulling Compose images in %s\n' "$label" "$directory"
+    run_compose "$id" "$label" "$directory" pull "$@" pull || return 1
     (( cancel == 0 )) || return 0
-    pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
-        lxcdockercomposeupdater "$directory" "$@" up -d </dev/null
+    printf '%s starting the Compose project in %s\n' "$label" "$directory"
+    printf '  docker compose'
+    printf ' %q' "$@" up -d
+    printf '\n'
+    run_compose "$id" "$label" "$directory" 'up -d' "$@" up -d || return 1
+    (( cancel == 0 )) || return 0
+    printf '%s: docker compose up -d succeeded. Container status before power-state cleanup:\n' "$label"
+    run_compose "$id" "$label" "$directory" 'ps --all' "$@" ps --all || return 1
 }
 
 update_projects() {
