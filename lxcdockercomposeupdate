@@ -170,7 +170,7 @@ trap 'cancel=143' TERM
 trap 'cancel=129' HUP
 
 wait_for_docker() {
-    local id=$1 deadline=$((SECONDS + 60)) remaining probe
+    local id=$1 label=$2 deadline=$((SECONDS + 60)) remaining probe
     while (( cancel == 0 && SECONDS < deadline )); do
         remaining=$((deadline - SECONDS))
         (( remaining <= 5 )) || remaining=5
@@ -186,14 +186,14 @@ wait_for_docker() {
         (( cancel == 0 && SECONDS < deadline )) && sleep 1
     done
     (( cancel == 0 )) || return 0
-    printf 'LXC %s: Docker did not become ready within 60 seconds.\n' "$id" >&2
+    printf '%s: Docker did not become ready within 60 seconds.\n' "$label" >&2
     return 1
 }
 
 update_project() {
-    local id=$1 directory=$2
-    shift 2
-    printf 'LXC %s updating %s\n' "$id" "$directory"
+    local id=$1 label=$2 directory=$3
+    shift 3
+    printf '%s updating %s\n' "$label" "$directory"
     pct exec "$id" -- sh -c 'cd "$1" && shift && exec docker compose "$@"' \
         lxcdockercomposeupdate "$directory" "$@" pull </dev/null || return 1
     (( cancel == 0 )) || return 0
@@ -202,9 +202,9 @@ update_project() {
 }
 
 update_projects() {
-    local id=$1 index readiness records project directory files file
+    local id=$1 label=$2 index readiness records project directory files file
     local -a handled=() compose_args=() compose_files=() options=()
-    wait_for_docker "$id"
+    wait_for_docker "$id" "$label"
     readiness=$?
     if (( readiness == 2 )) && { (( prune )) || ! contains_id "$id" "${configured[@]}"; }; then
         return 2
@@ -213,6 +213,7 @@ update_projects() {
     (( cancel == 0 )) || return 0
 
     if (( prune )); then
+        printf '%s pruning dangling Docker images\n' "$label"
         pct exec "$id" -- docker image prune --force </dev/null || return 1
         return 0
     fi
@@ -221,7 +222,7 @@ update_projects() {
             (( cancel == 0 )) || break
             [[ ${project_ids[index]} == "$id" ]] || continue
             compose_options "${settings[index]}"
-            update_project "$id" "${directories[index]}" "${options[@]}" || return 1
+            update_project "$id" "$label" "${directories[index]}" "${options[@]}" || return 1
         done
         return 0
     fi
@@ -237,7 +238,7 @@ update_projects() {
         (( cancel == 0 )) || break
         contains_id "$project" "${handled[@]}" && continue
         if [[ -z $project || $directory != /* || -z $files ]]; then
-            printf 'LXC %s: incomplete Compose labels for project %s. Set its guest directory in the config.\n' "$id" "$project" >&2
+            printf '%s: incomplete Compose labels for project %s. Set its guest directory in the config.\n' "$label" "$project" >&2
             return 1
         fi
         handled+=("$project")
@@ -246,7 +247,7 @@ update_projects() {
         for file in "${compose_files[@]}"; do
             compose_args+=(-f "$file")
         done
-        update_project "$id" "$directory" "${compose_args[@]}" || return 1
+        update_project "$id" "$label" "$directory" "${compose_args[@]}" || return 1
     done <<< "$records"
     return 0
 }
@@ -254,28 +255,34 @@ update_projects() {
 failed=0
 for id in "${selected[@]}"; do
     (( cancel == 0 )) || break
+    label="LXC $id"
+    guest_config=$(pct config "$id")
+    config_status=$?
+    if [[ $guest_config =~ (^|$'\n')hostname:[[:blank:]]+([^[:space:]]+) ]]; then
+        label="${BASH_REMATCH[2]} ($label)"
+    fi
     if (( explicit == 0 )) && contains_id "$id" "${excluded[@]}"; then
-        summary+=("LXC $id: skipped (excluded)")
+        summary+=("$label: skipped (excluded)")
         continue
     fi
-    if ! guest_config=$(pct config "$id"); then
-        summary+=("LXC $id: failed to read guest configuration")
+    if (( config_status != 0 )); then
+        summary+=("$label: failed to read guest configuration")
         failed=1
         continue
     fi
     if [[ $guest_config =~ (^|$'\n')template:[[:blank:]]+1($|$'\n') ]]; then
-        summary+=("LXC $id: skipped (template)")
+        summary+=("$label: skipped (template)")
         continue
     fi
     if ! state=$(pct status "$id"); then
-        summary+=("LXC $id: failed to read power state")
+        summary+=("$label: failed to read power state")
         failed=1
         continue
     fi
     case "$state" in
         'status: running'|'status: stopped') ;;
         *)
-            summary+=("LXC $id: unexpected power state ($state)")
+            summary+=("$label: unexpected power state ($state)")
             failed=1
             continue ;;
     esac
@@ -284,25 +291,25 @@ for id in "${selected[@]}"; do
         action='check for Compose projects'
         (( ! prune )) || action='prune dangling Docker images if Docker is available'
         if [[ $state == 'status: stopped' ]]; then
-            summary+=("LXC $id: would start, $action, then shut down")
+            summary+=("$label: would start, $action, then shut down")
         else
-            summary+=("LXC $id: would $action and leave running")
+            summary+=("$label: would $action and leave running")
         fi
         for index in "${!project_ids[@]}"; do
             (( ! prune )) && [[ ${project_ids[index]} == "$id" ]] && summary+=("  Configured: ${directories[index]}")
         done
         continue
     fi
-    printf 'LXC %s was %s\n' "$id" "${state#status: }"
+    printf '%s was %s\n' "$label" "${state#status: }"
     if [[ $state == 'status: stopped' ]] && ! pct start "$id"; then
-        summary+=("LXC $id: start failed")
+        summary+=("$label: start failed")
         failed=1
         continue
     fi
 
     outcome=interrupted
     if (( cancel == 0 )); then
-        update_projects "$id"
+        update_projects "$id" "$label"
         case $? in
             0) if (( prune )); then outcome='prune completed'; else outcome=updated; fi ;;
             2) outcome='skipped (Docker unavailable)' ;;
@@ -314,7 +321,7 @@ for id in "${selected[@]}"; do
     if [[ $state == 'status: stopped' ]]; then
         restoration='stopped state restored'
         if [[ $(pct status "$id") != 'status: stopped' ]]; then
-            printf 'LXC %s shutting down\n' "$id"
+            printf '%s shutting down\n' "$label"
             if ! pct shutdown "$id" --timeout 60 || [[ $(pct status "$id") != 'status: stopped' ]]; then
                 restoration='shutdown failed; check power state'
                 failed=1
@@ -322,7 +329,7 @@ for id in "${selected[@]}"; do
         fi
         outcome="$outcome ($restoration)"
     fi
-    summary+=("LXC $id: $outcome")
+    summary+=("$label: $outcome")
 done
 if (( plan )); then
     printf '\nPlan (no guests started or changed)\n'
