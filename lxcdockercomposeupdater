@@ -14,7 +14,7 @@ die() {
 get_latest() (
     (( EUID == 0 )) || die 'Run -getlatest as root on the Proxmox host.'
     local target=/usr/local/bin/lxcdockercomposeupdater tmp
-    local repo=mlavio829/ProxmoxLXCUpdater revision url
+    local repo=mlavio829/Proxmox-LXC-Docker-Compose-Updater revision url
     revision=$(wget -qO- --no-cache --header='Accept: application/vnd.github.sha' \
         "https://api.github.com/repos/$repo/commits/main") ||
         die 'Could not resolve the latest version on GitHub.'

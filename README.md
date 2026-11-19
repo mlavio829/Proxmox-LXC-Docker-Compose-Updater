@@ -27,7 +27,7 @@ config, the installer copies it when the new config path is empty.
   set -e
   tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdater.XXXXXX)
   trap 'rm -f -- "$tmp"' EXIT
-  repo=mlavio829/ProxmoxLXCUpdater
+  repo=mlavio829/Proxmox-LXC-Docker-Compose-Updater
   revision=$(wget -qO- --no-cache --header='Accept: application/vnd.github.sha' \
     "https://api.github.com/repos/$repo/commits/main")
   [[ $revision =~ ^[0-9a-f]{40}$ ]]
