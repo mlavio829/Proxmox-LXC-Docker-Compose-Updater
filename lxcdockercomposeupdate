@@ -1,8 +1,10 @@
 #!/bin/bash
+# lxcdockercompose self-update format 1
 
 config=/etc/lxcdockercomposeupdate.conf
 cancel=0
 plan=0
+prune=0
 
 die() {
     printf '%s\n' "$*" >&2
@@ -10,7 +12,7 @@ die() {
 }
 
 get_latest() (
-    (( EUID == 0 )) || die 'Run --getlatest as root on the Proxmox host.'
+    (( EUID == 0 )) || die 'Run -getlatest as root on the Proxmox host.'
     local target=/usr/local/bin/lxcdockercomposeupdate tmp
     local url=https://raw.githubusercontent.com/mlavio829/ProxmoxLXCUpdater/main/lxcdockercomposeupdate
     tmp=$(mktemp /usr/local/bin/.lxcdockercomposeupdate.XXXXXX) || die 'Could not stage the update.'
@@ -18,32 +20,55 @@ get_latest() (
     trap 'exit 130' INT
     trap 'exit 143' TERM
     wget -O "$tmp" "$url" || die 'Could not download the latest version.'
-    local header
-    read -r header < "$tmp" && [[ $header == '#!/bin/bash' ]] && bash -n "$tmp" ||
-        die 'The downloaded file is not a valid updater script.'
-    if [[ -x $target ]] && cmp -s "$tmp" "$target"; then
-        printf 'lxcdockercomposeupdate is already up to date.\n'
-        exit 0
+    local header format
+    {
+        read -r header && read -r format &&
+            [[ $header == '#!/bin/bash' && $format == '# lxcdockercompose self-update format 1' ]]
+    } < "$tmp" && bash -n "$tmp" ||
+        die 'The download is invalid or predates the lxcdockercompose command.'
+    local command_path=/usr/local/bin/lxcdockercompose
+    if [[ -e $command_path || -L $command_path ]]; then
+        [[ -L $command_path && $command_path -ef $target ]] || die "Command path already in use: $command_path"
     fi
-    chmod 0755 "$tmp" && mv -fT -- "$tmp" "$target" || die 'Could not install the update.'
-    printf 'Updated %s\n' "$target"
+    if [[ -x $target ]] && cmp -s "$tmp" "$target"; then
+        printf 'lxcdockercompose is already up to date.\n'
+    else
+        chmod 0755 "$tmp" && mv -fT -- "$tmp" "$target" || die 'Could not install the update.'
+        printf 'Updated %s\n' "$target"
+    fi
+    if [[ ! -L $command_path ]]; then
+        ln -s lxcdockercomposeupdate "$command_path" || die "Could not create command: $command_path"
+    fi
 )
 
 usage() {
-    printf 'Usage: lxcdockercomposeupdate [--plan] [--config FILE] [LXC_ID ...]\n       lxcdockercomposeupdate --getlatest\n'
+    cat <<'HELP'
+Usage: lxcdockercompose [options] [LXC_ID ...]
+
+  (no action)     Pull images and redeploy Compose projects.
+  -prune          Remove dangling Docker images. Volumes are preserved.
+  -plan           Show which guests would be visited without booting them.
+  -config FILE    Read an alternate configuration file.
+  -getlatest      Update this command from GitHub without visiting guests.
+  -help, -h       Show this help.
+
+Supply LXC IDs to limit the run. By default, the command visits all local LXCs
+except configured exclusions and templates. Double-dash options also work.
+HELP
 }
 
-if [[ ${1:-} == --getlatest ]]; then
-    (( $# == 1 )) || die '--getlatest cannot be combined with other arguments.'
+if [[ ${1:-} == -getlatest || ${1:-} == --getlatest ]]; then
+    (( $# == 1 )) || die '-getlatest cannot be combined with other arguments.'
     get_latest
     exit $?
 fi
 
 while (( $# )); do
     case $1 in
-        --help|-h) usage; exit 0 ;;
-        --plan) plan=1; shift ;;
-        --config)
+        -help|--help|-h) usage; exit 0 ;;
+        -plan|--plan) plan=1; shift ;;
+        -prune|--prune) prune=1; shift ;;
+        -config|--config)
             (( $# >= 2 )) || die 'Missing configuration file path.'
             config=$2
             [[ -r $config ]] || die "Cannot read $config."
@@ -181,12 +206,16 @@ update_projects() {
     local -a handled=() compose_args=() compose_files=() options=()
     wait_for_docker "$id"
     readiness=$?
-    if (( readiness == 2 )) && ! contains_id "$id" "${configured[@]}"; then
+    if (( readiness == 2 )) && { (( prune )) || ! contains_id "$id" "${configured[@]}"; }; then
         return 2
     fi
     (( readiness == 0 )) || return 1
     (( cancel == 0 )) || return 0
 
+    if (( prune )); then
+        pct exec "$id" -- docker image prune --force </dev/null || return 1
+        return 0
+    fi
     if contains_id "$id" "${configured[@]}"; then
         for index in "${!project_ids[@]}"; do
             (( cancel == 0 )) || break
@@ -252,13 +281,15 @@ for id in "${selected[@]}"; do
     esac
     (( cancel == 0 )) || break
     if (( plan )); then
+        action='check for Compose projects'
+        (( ! prune )) || action='prune dangling Docker images if Docker is available'
         if [[ $state == 'status: stopped' ]]; then
-            summary+=("LXC $id: would start, check for Compose projects, then shut down")
+            summary+=("LXC $id: would start, $action, then shut down")
         else
-            summary+=("LXC $id: would check for Compose projects and leave running")
+            summary+=("LXC $id: would $action and leave running")
         fi
         for index in "${!project_ids[@]}"; do
-            [[ ${project_ids[index]} != "$id" ]] || summary+=("  Configured: ${directories[index]}")
+            (( ! prune )) && [[ ${project_ids[index]} == "$id" ]] && summary+=("  Configured: ${directories[index]}")
         done
         continue
     fi
@@ -273,10 +304,10 @@ for id in "${selected[@]}"; do
     if (( cancel == 0 )); then
         update_projects "$id"
         case $? in
-            0) outcome=updated ;;
+            0) if (( prune )); then outcome='prune completed'; else outcome=updated; fi ;;
             2) outcome='skipped (Docker unavailable)' ;;
             3) outcome='skipped (no deployed Compose projects)' ;;
-            *) outcome='update failed'; failed=1 ;;
+            *) if (( prune )); then outcome='prune failed'; else outcome='update failed'; fi; failed=1 ;;
         esac
         (( cancel == 0 )) || outcome=interrupted
     fi
